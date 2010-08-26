@@ -1,7 +1,35 @@
-var sys   = require('sys'),
-    exec  = require('child_process').exec;
+var sys   = require('sys'), fs=require('fs'), path=require('path'), exec  = require('child_process').exec;
 
-this.tempdir=__dirname+'/';
+var that=this;    
+that.tempdir='/tmp/';
+var lastcommand
+this.tryshm = function()
+{
+ path.exists('/dev/shm/',function(exists) // try shm
+ {
+  if(exists)
+  {
+   path.exists('/dev/shm/node-pango-view',function(exists)
+   {
+    if(exists)
+    {
+     that.tempdir='/dev/shm/node-pango-view/';
+    }
+    else
+    {
+     fs.mkdir('/dev/shm/node-pango-view', 0777, function (err)
+     {
+      if(err) throw err;
+      else
+       that.tempdir='/dev/shm/node-pango-view/'; 
+      //callback();
+     });
+    }
+   });
+  }
+ }); 
+}
+this.tryshm();
 
 var errorimage=""; //error image full path
 
@@ -22,14 +50,15 @@ function uniquerandom()
 
     
 function show_error(error, stdout, stderr)
+{
+  if(stdout)console.log('pango-view_stdout: ' + stdout);
+  if(stderr)console.log('pango-view_stderr: ' + stderr);
+  if (error !== null)
   {
-    sys.print('pango-view_stdout: ' + stdout);
-    sys.print('pango-view_stderr: ' + stderr);
-    if (error !== null)
-    {
-      console.log('pango-view_exec error: ' + error);
-    }
+    console.log('node-pango-view last command: ' + lastcommand);
+    console.log('node-pango-view error: ' + error);
   }
+}
   // &lt;html&gt;.
 var exec_option={timeout:1500};
 
@@ -41,8 +70,9 @@ function write(text,options,callback)
   var args_str='',args=[];
   
   args.push('-q'); // command line only
-  args.push('--background=transparent');
-  args.push('--markup');
+
+  if('background' in options)   args.push('--background='+options['background']); else args.push('--background=transparent');
+  if(('markup' in options)) {   if(options['markup']) args.push('--markup');      } else args.push('--markup'); 
   
   if(('no-auto-dir' in options) && options['no-auto-dir'])    args.push('--no-auto-dir');
   if('dpi' in options)          args.push('--dpi='+options['dpi']);
@@ -50,6 +80,7 @@ function write(text,options,callback)
   if('ellipsize' in options)    args.push('--ellipsize='+options['ellipsize']);
   if('font' in options)         args.push('--font='+options['font']);
   if('color' in options)        args.push('--foreground='+options['color']);
+  if('foreground' in options)   args.push('--foreground='+options['foreground']);
   if('gravity' in options)      args.push('--gravity='+options['gravity']);
   if('gravity-hint' in options) args.push('--gravity-hint='+options['gravity-hint']);
   //if(('header' in options)    && options['header'])         args.push('--header');
@@ -82,13 +113,118 @@ function write(text,options,callback)
     return m.slice(0, 1)+'\\\'';
    })+"'";
   }
+  
   //child = exec('pangoview *.js bad_file | wc -l',
-  var child = exec('pango-view '+args_str,exec_option,  show_error );
+  //console.log('pango-view '+args_str);
+  var cmd='export LANG=en_US.UTF-8;pango-view '+args_str,exec_option;
+  lastcommand=cmd;
+  var child = exec(cmd,  show_error );
+
+  //var child = exec('export LANG=en_US.UTF-8;env ',  show_error );
   child.on('exit',function (code, signal) {if(code==0) callback(file); else callback(errorimage)});
 } this.write=write;
 
+function compose(bg_args_str,images,callback)
+{
+  //bg is file
+  //images is array of [file,top,left,options];
+  var out_file= this.tempdir+uniquerandom()+'.png';
+
+  var imgs_args_str='',imgs_args=[];
+  for(var i=0;i<images.length;i++)
+  {
+   imgs_args.push(images[i]); // bg is 1st arument
+   //if(images[i].length>1) imgs_args.push(images[i][1]);
+   //imgs_args.push('-geometry');imgs_args.push('+'+images[i][1]+'+'+images[i][2]);
+   // some more options here
+   //imgs_args.push('-composite');
+  }
+  
+  for(var i=0;i<imgs_args.length;i++)
+  {
+   imgs_args_str+=' '+imgs_args[i];
+   /*" '"+imgs_args[i].replace(/[^\\]'/g, function(m)
+   {
+    return m.slice(0, 1)+'\\\'';
+   })+"'";*/
+  }
+  
+  //child = exec('pangoview *.js bad_file | wc -l',
+       //console.log('convert '+bg_args_str+' '+imgs_args_str+' '+out_file);
+  var cmd='convert '+bg_args_str+' '+imgs_args_str+' '+out_file,exec_option;
+  lastcommand=cmd;
+  var child = exec(cmd,  show_error );
+  
+  
+  child.on('exit',function (code, signal) {if(code==0) callback(out_file); else callback(errorimage)});
+} this.compose=compose;
 
 
+function size(img_args_str,callback)
+{
+  //     console.log('identify '+img_args_str);
+  var cmd   ='identify '+img_args_str,exec_option;
+  lastcommand=cmd;
+  var child = exec(cmd,  function(err, stdout, stderr) 
+  {
+   var result;
+   if (!err)
+   {
+    var v = stdout.split(/ +/);
+    var x = v[2].split(/x/);
+    var result =
+    {
+     format: v[1],
+     width:  parseInt(x[0]),
+     height: parseInt(x[1]),
+     depth:  parseInt(v[4]),
+    };
+    callback(result)
+   }
+   else
+   {
+    console.log(' error in identify');
+    var result =
+    {
+     format: '',
+     width:  1,
+     height: 1,
+     depth:  8,
+     'err':err,
+    };
+    callback(result)
+   }
+  });
+
+  //child.on('exit',function (code, signal) {if(code==0) callback(out_file); else callback(errorimage)});
+} this.size=size;
+
+function fonts(callback)
+{
+  var cmd   ='fc-list :lang=he -f %{family}\\\\n|sort -u';
+  lastcommand=cmd;
+  var child = exec(cmd,exec_option,  function(err, stdout, stderr) 
+  {
+   var result;
+   if (!err)
+   {
+    //console.log(stdout);
+    var result = stdout.split("\n");
+    //result.length--;
+    callback(result);
+   }
+   else
+   {
+    console.log(' error in identify');
+    var result =['error calling "fc-list -f %{family}\\\\n"'];
+    callback(result);
+   }
+  });
+  //child.on('exit',function (code, signal) {if(code==0) callback(out_file); else callback(errorimage)});
+} this.fonts=fonts;
+
+        
+//convert bgs/morguefile_97997.jpg 12825167297205756.png  -geometry +31+105 -composite 12825167297226952.png -geometry +31+205 -composite out6.png
 /*
 # pango-view --help-all
 Usage:
@@ -134,4 +270,21 @@ Application Options:
   --waterfall                                        Create a waterfall display
   -w, --width=points                                 Width in points to which to wrap lines or ellipsize
   --wrap=word/char/word-char                         Text wrapping mode (needs a width to be set)
+*/
+
+
+
+
+/*
+to speed up things lets use tempfs
+
+to fstab adda like like this:
+
+//tmpfs           /mnt/tmpfs   tmpfs        size=50m              0 0
+
+instead i can use /dev/shm as path...
+also i need a delete on interval function
+/dev/shm
+                  -resize x640 -gravity center  -crop 240x640+0+0
+ convert logo:    -resize x640 -gravity center  -crop 240x640+0+0 +repage   space_crop.jpg
 */
